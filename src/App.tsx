@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChatInterface } from './components/ChatInterface'
-import type { Message } from './types/chat'
+import type { Message, Attachment } from './types/chat'
 import styles from './App.module.css'
 
 function App() {
@@ -13,22 +13,31 @@ function App() {
     }
   ])
 
-  const handleSendMessage = async (content: string) => {
+  const handleSendMessage = async (content: string, attachments?: Attachment[]) => {
     // 添加用户消息
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
       content,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      attachments: attachments && attachments.length > 0 ? attachments : undefined
     }
     setMessages((prev) => [...prev, userMessage])
 
     // 模拟AI回复
     setTimeout(() => {
+      let replyContent = `我收到了你的消息`
+      if (content) {
+        replyContent += `"${content}"`
+      }
+      if (attachments && attachments.length > 0) {
+        replyContent += ` 和 ${attachments.length} 个附件`
+      }
+
       const aiMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: `我收到了你的消息："${content}"`,
+        content: replyContent,
         timestamp: Date.now()
       }
       setMessages((prev) => [...prev, aiMessage])
