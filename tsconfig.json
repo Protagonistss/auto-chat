@@ -1,19 +1,11 @@
 {
   "files": [],
-  "compilerOptions": {
-    "plugins": [{ 
-      "name": "typescript-plugin-css-modules"
-    }]
-  },
   "references": [
     {
       "path": "./tsconfig.node.json"
     },
     {
       "path": "./tsconfig.app.json"
-    },
-    {
-      "path": "./tsconfig.vitest.json"
     }
   ]
 }
