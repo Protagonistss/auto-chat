@@ -13,6 +13,8 @@ export interface Message {
   content: string
   timestamp: number
   attachments?: Attachment[]
+  loading?: boolean
+  statusText?: string
 }
 
 export interface ChatConfig {
