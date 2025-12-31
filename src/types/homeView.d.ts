@@ -1,1 +1,0 @@
-export type TOption = { name: string, code: string }
