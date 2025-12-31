@@ -5,6 +5,7 @@ import styles from './ChatInterface.module.css'
 interface ChatInterfaceProps {
   messages: Message[]
   onSendMessage: (content: string, attachments?: Attachment[]) => void | Promise<void>
+  onBuild?: (xmlContent: string) => void | Promise<void>
   placeholder?: string
   disabled?: boolean
 }
@@ -12,12 +13,14 @@ interface ChatInterfaceProps {
 export function ChatInterface({
   messages,
   onSendMessage,
+  onBuild,
   placeholder = '输入消息...',
   disabled = false
 }: ChatInterfaceProps) {
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const [buildingMessageId, setBuildingMessageId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -130,6 +133,87 @@ export function ChatInterface({
     textarea.style.height = `${newHeight}px`
   }
 
+  // 渲染消息内容（支持代码块）
+  const renderContent = (content: string, messageId?: string) => {
+    // 检测代码块 ```lang...```
+    const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g
+    const parts: Array<{ type: 'text' | 'code'; content: string; lang?: string }> = []
+    let lastIndex = 0
+    let match
+
+    while ((match = codeBlockRegex.exec(content)) !== null) {
+      // 添加代码块前的文本
+      if (match.index > lastIndex) {
+        parts.push({
+          type: 'text',
+          content: content.slice(lastIndex, match.index)
+        })
+      }
+      // 添加代码块
+      parts.push({
+        type: 'code',
+        lang: match[1] || '',
+        content: match[2]
+      })
+      lastIndex = match.index + match[0].length
+    }
+
+    // 添加剩余文本
+    if (lastIndex < content.length) {
+      parts.push({
+        type: 'text',
+        content: content.slice(lastIndex)
+      })
+    }
+
+    // 如果没有代码块，返回原始内容
+    if (parts.length === 0) {
+      return content
+    }
+
+    // 渲染带代码块的内容
+    return parts.map((part, index) => {
+      if (part.type === 'code') {
+        const isXml = part.lang === 'xml' && onBuild
+        return (
+          <div key={index} className={styles.codeBlock}>
+            {part.lang && <div className={styles.codeLang}>{part.lang}</div>}
+            <pre><code>{part.content}</code></pre>
+            {isXml && messageId && (
+              <button
+                onClick={() => handleBuild({ id: messageId, role: 'assistant', content, timestamp: 0 })}
+                disabled={buildingMessageId === messageId}
+                className={styles.buildButton}
+              >
+                {buildingMessageId === messageId ? '构建中...' : '构建'}
+              </button>
+            )}
+          </div>
+        )
+      }
+      return <span key={index}>{part.content}</span>
+    })
+  }
+
+  // 提取 XML 代码块内容
+  const extractXmlContent = (content: string): string | null => {
+    const match = content.match(/```xml\n([\s\S]*?)```/)
+    return match ? match[1].trim() : null
+  }
+
+  // 处理构建点击
+  const handleBuild = async (message: Message) => {
+    const xmlContent = extractXmlContent(message.content)
+    if (!xmlContent || !onBuild) return
+
+    setBuildingMessageId(message.id)
+    try {
+      await onBuild(xmlContent)
+    } finally {
+      setBuildingMessageId(null)
+    }
+  }
+
   return (
     <div className={styles.chatContainer}>
       {/* 消息列表区域 */}
@@ -166,9 +250,18 @@ export function ChatInterface({
                       ))}
                     </div>
                   )}
-                  {message.content && (
-                    <div className={styles.messageBubble}>{message.content}</div>
-                  )}
+                  {message.loading ? (
+                    <div className={styles.messageBubble}>
+                      <div className={styles.loadingContainer}>
+                        <div className={styles.loadingSpinner} />
+                        <span className={styles.loadingText}>{message.statusText || '处理中...'}</span>
+                      </div>
+                    </div>
+                  ) : message.content ? (
+                    <div className={styles.messageBubble}>
+                      {renderContent(message.content, message.role === 'assistant' ? message.id : undefined)}
+                    </div>
+                  ) : null}
                   <div className={styles.messageTime}>
                     {new Date(message.timestamp).toLocaleTimeString()}
                   </div>
