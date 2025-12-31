@@ -1,0 +1,23 @@
+.main {
+  width: 100vw;
+  height: 100vh;
+  background: #fff;
+  display: flex;
+  flex-direction: row;
+  .aside {
+    width: 15%;
+    height: 100%;
+    background: #ccc;
+    flex-shrink: 0;
+    .asideItem {
+      color: black;
+      height: 30px;
+      text-align: center;
+      line-height: 30px;
+      cursor: pointer;
+    }
+  }
+  .content {
+    width: calc(100vw - 15%);
+  }
+}
