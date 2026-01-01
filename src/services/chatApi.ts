@@ -1,6 +1,17 @@
 // API 基础 URL
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
+// 导入 SSE 相关类型
+import type {
+  SSECallbacks,
+  SSEContentData,
+  SSEEndData,
+  SSEErrorEvent,
+  SSEEventType,
+  SSEStartData,
+  StreamMessageOptions,
+} from '@/types/chat'
+
 // API 响应类型
 export interface CreateConversationResponse {
   conversation_id: string
@@ -11,24 +22,6 @@ export interface FileUploadResponse {
   file_id: string
   original_name: string
   file_size: number
-}
-
-export interface MessageTaskSubmitResponse {
-  task_id: string
-}
-
-export interface MessageTask {
-  task_id: string
-  status: 'pending' | 'processing' | 'success' | 'failed'
-  result_message?: {
-    id: string
-    role: 'assistant'
-    content: string
-    created_at: string
-  }
-  error_message?: string
-  created_at: string
-  completed_at?: string
 }
 
 export interface ConversationMessage {
@@ -144,16 +137,148 @@ class ChatApiClient {
   }
 
   /**
-   * 查询消息任务状态
+   * 发送消息（SSE 流式响应）
    */
-  async getMessageTask(taskId: string): Promise<MessageTask> {
-    const response = await fetch(`${this.baseUrl}/conversations/tasks/${taskId}`)
+  async sendMessageStream(
+    conversationId: string,
+    message: string,
+    fileIds: string[] | undefined,
+    options: StreamMessageOptions,
+    enableThinking: boolean = false
+  ): Promise<string> {
+    const { signal, callbacks } = options
 
-    if (!response.ok) {
-      throw new Error(`查询任务失败: ${response.statusText}`)
+    const requestBody = {
+      message,
+      file_ids: fileIds,
+      enable_thinking: enableThinking,
     }
 
-    return response.json()
+    // 调试日志
+    console.log('发送请求:', { enableThinking, requestBody })
+
+    const response = await fetch(`${this.baseUrl}/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+      signal,
+    })
+
+    if (!response.ok) {
+      throw new Error(`发送消息失败: ${response.statusText}`)
+    }
+
+    // 验证响应类型是 SSE
+    const contentType = response.headers.get('content-type')
+    if (!contentType?.includes('text/event-stream')) {
+      throw new Error('服务器不支持流式响应')
+    }
+
+    const reader = response.body?.getReader()
+    if (!reader) {
+      throw new Error('无法读取响应流')
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let messageId = ''
+
+    try {
+      while (true) {
+        // 检查是否被中止
+        if (signal?.aborted) {
+          reader.cancel()
+          throw new Error('请求已取消')
+        }
+
+        const { done, value } = await reader.read()
+
+        if (done) break
+
+        // 解码并追加到缓冲区
+        buffer += decoder.decode(value, { stream: true })
+
+        // 按行处理 SSE 数据
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || '' // 保留未完成的行
+
+        let currentEvent: SSEEventType | null = null
+        let currentData = ''
+
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.substring(7).trim() as SSEEventType
+          } else if (line.startsWith('data: ')) {
+            currentData = line.substring(6)
+          } else if (line === '') {
+            // 空行表示事件结束
+            if (currentData) {
+              // 如果没有 event 类型，默认为 'data'
+              const eventType = currentEvent || 'data'
+              this.handleSSEEvent(eventType, currentData, callbacks)
+              if (eventType === 'start' || eventType === 'end') {
+                try {
+                  const data = JSON.parse(currentData)
+                  if (data.message_id) messageId = data.message_id
+                } catch {
+                  // 忽略解析错误
+                }
+              }
+            }
+            currentEvent = null
+            currentData = ''
+          }
+        }
+      }
+
+      return messageId
+    } catch (error) {
+      // 处理中止错误
+      if (error instanceof Error && error.name === 'AbortError') {
+        callbacks.onError?.('请求已取消')
+        throw error
+      }
+      throw error
+    } finally {
+      reader.releaseLock()
+    }
+  }
+
+  /**
+   * 处理 SSE 事件
+   */
+  private handleSSEEvent(type: SSEEventType, data: string, callbacks: SSECallbacks): void {
+    try {
+      switch (type) {
+        case 'start':
+          console.log('SSE start:', data)
+          callbacks.onStart?.(JSON.parse(data) as SSEStartData)
+          break
+        case 'data':
+          const parsed = JSON.parse<SSEContentData>(data)
+          // 调试日志 - 显示完整的 thinking 值
+          console.log('SSE data:', {
+            content: parsed.content.substring(0, 100),
+            thinking: parsed.thinking,
+            thinkingType: typeof parsed.thinking
+          })
+          callbacks.onChunk?.(parsed.content, parsed.thinking)
+          break
+        case 'end':
+          console.log('SSE end:', data)
+          callbacks.onEnd?.(JSON.parse(data) as SSEEndData)
+          break
+        case 'error':
+          const errorData = JSON.parse<{ error: string }>(data)
+          callbacks.onError?.(errorData.error)
+          break
+      }
+    } catch (error) {
+      console.error('解析 SSE 事件失败:', error)
+      callbacks.onError?.('解析响应数据失败')
+    }
   }
 
   /**
@@ -193,41 +318,6 @@ class ChatApiClient {
     if (!response.ok) {
       throw new Error(`删除会话失败: ${response.statusText}`)
     }
-  }
-
-  /**
-   * 轮询任务直到完成
-   */
-  async pollTask(
-    taskId: string,
-    options: {
-      interval?: number
-      maxAttempts?: number
-      onProgress?: (task: MessageTask) => void
-    } = {}
-  ): Promise<MessageTask> {
-    const { interval = 1000, maxAttempts = 60, onProgress } = options
-
-    for (let i = 0; i < maxAttempts; i++) {
-      const task = await this.getMessageTask(taskId)
-
-      if (onProgress) {
-        onProgress(task)
-      }
-
-      if (task.status === 'success') {
-        return task
-      }
-
-      if (task.status === 'failed') {
-        throw new Error(task.error_message || '任务处理失败')
-      }
-
-      // 等待后重试
-      await new Promise((resolve) => setTimeout(resolve, interval))
-    }
-
-    throw new Error('任务处理超时')
   }
 
   /**

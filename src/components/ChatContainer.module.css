@@ -64,6 +64,51 @@
   cursor: not-allowed;
 }
 
+.cancelButton {
+  padding: 8px 16px;
+  background-color: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background-color 0.2s;
+}
+
+.cancelButton:hover {
+  background-color: #dc2626;
+}
+
+.thinkingToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background-color: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #374151;
+  transition: all 0.2s;
+  user-select: none;
+}
+
+.thinkingToggle:hover:not(:has(input:disabled)) {
+  background-color: #e5e7eb;
+}
+
+.thinkingToggle input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.thinkingToggle input[type="checkbox"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .errorBanner {
   position: absolute;
   top: 16px;

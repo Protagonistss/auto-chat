@@ -21,9 +21,23 @@ export function ChatInterface({
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [buildingMessageId, setBuildingMessageId] = useState<string | null>(null)
+  const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // 切换思考内容展开状态
+  const toggleThinking = (messageId: string) => {
+    setExpandedThinking((prev) => {
+      const next = new Set(prev)
+      if (next.has(messageId)) {
+        next.delete(messageId)
+      } else {
+        next.add(messageId)
+      }
+      return next
+    })
+  }
 
   // 自动滚动到底部
   const scrollToBottom = () => {
@@ -134,7 +148,7 @@ export function ChatInterface({
   }
 
   // 渲染消息内容（支持代码块）
-  const renderContent = (content: string, messageId?: string) => {
+  const renderContent = (content: string, messageId?: string, isThinkingContent?: boolean) => {
     // 检测代码块 ```lang...```
     const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g
     const parts: Array<{ type: 'text' | 'code'; content: string; lang?: string }> = []
@@ -174,12 +188,16 @@ export function ChatInterface({
     // 渲染带代码块的内容
     return parts.map((part, index) => {
       if (part.type === 'code') {
-        const isXml = part.lang === 'xml' && onBuild
+        // 调试日志
+        console.log('代码块:', { lang: part.lang, hasOrm: part.content.includes('<orm'), onBuild: !!onBuild, messageId, isThinkingContent })
+        // 支持 xml 和其他包含 XML 配置的代码块
+        // 只有在非思考区域、是 XML、有 onBuild 回调、有 messageId 时才显示构建按钮
+        const isXml = (part.lang === 'xml' || (!part.lang && part.content.includes('<orm'))) && onBuild && messageId && !isThinkingContent
         return (
           <div key={index} className={styles.codeBlock}>
             {part.lang && <div className={styles.codeLang}>{part.lang}</div>}
             <pre><code>{part.content}</code></pre>
-            {isXml && messageId && (
+            {isXml && (
               <button
                 onClick={() => handleBuild({ id: messageId, role: 'assistant', content, timestamp: 0 })}
                 disabled={buildingMessageId === messageId}
@@ -257,11 +275,46 @@ export function ChatInterface({
                         <span className={styles.loadingText}>{message.statusText || '处理中...'}</span>
                       </div>
                     </div>
-                  ) : message.content ? (
-                    <div className={styles.messageBubble}>
-                      {renderContent(message.content, message.role === 'assistant' ? message.id : undefined)}
-                    </div>
-                  ) : null}
+                  ) : (
+                    <>
+                      {/* 思考内容 */}
+                      {message.thinkingContent && (
+                        <div className={styles.thinkingSection}>
+                          <button
+                            className={styles.thinkingToggle}
+                            onClick={() => toggleThinking(message.id)}
+                          >
+                            <span className={styles.thinkingIcon}>
+                              {expandedThinking.has(message.id) ? '▼' : '▶'}
+                            </span>
+                            <span className={styles.thinkingLabel}>🧠 思考过程</span>
+                          </button>
+                          {expandedThinking.has(message.id) && (
+                            <div className={styles.thinkingContent}>
+                              {renderContent(message.thinkingContent, undefined, true)}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {/* 回答内容 - 始终显示在思考区域之外 */}
+                      {message.content && (
+                        <div className={styles.answerSection}>
+                          {message.thinkingContent && (
+                            <div className={styles.answerLabel}>💡 回答</div>
+                          )}
+                          <div className={styles.messageBubble}>
+                            {renderContent(message.content, message.role === 'assistant' ? message.id : undefined, false)}
+                          </div>
+                        </div>
+                      )}
+                      {/* 调试：显示 content 和 thinkingContent 的长度 */}
+                      {process.env.NODE_ENV === 'development' && (
+                        <div style={{ fontSize: '10px', color: '#999' }}>
+                          debug: content={message.content?.length || 0} thinking={message.thinkingContent?.length || 0}
+                        </div>
+                      )}
+                    </>
+                  )}
                   <div className={styles.messageTime}>
                     {new Date(message.timestamp).toLocaleTimeString()}
                   </div>

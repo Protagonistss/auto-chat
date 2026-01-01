@@ -18,10 +18,15 @@ export function ChatContainer({
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isInitializing, setIsInitializing] = useState(true)
+  const [abortController, setAbortController] = useState<AbortController | null>(null)
+  const [enableThinking, setEnableThinking] = useState(false)
 
   // 使用 ref 存储回调，避免作为依赖项
   const onConversationCreatedRef = useRef(onConversationCreated)
   onConversationCreatedRef.current = onConversationCreated
+
+  // 使用 ref 存储当前消息 ID，避免闭包问题
+  const currentMessageIdRef = useRef<string | null>(null)
 
   // 防止 StrictMode 导致的重复请求
   const isInitializedRef = useRef(false)
@@ -92,11 +97,15 @@ export function ChatContainer({
       setMessages((prev) => [...prev, userMessage])
 
       // 添加临时的 assistant 消息（加载中）
+      const tempAssistantId = `assistant-temp-${Date.now()}`
+      currentMessageIdRef.current = tempAssistantId
       const tempAssistantMessage: Message = {
-        id: `assistant-temp-${Date.now()}`,
+        id: tempAssistantId,
         role: 'assistant',
         content: '',
         timestamp: Date.now(),
+        loading: true,
+        statusText: '连接中...',
       }
       setMessages((prev) => [...prev, tempAssistantMessage])
 
@@ -115,61 +124,123 @@ export function ChatContainer({
           }
         }
 
-        // 发送消息
-        const { task_id } = await chatApi.sendMessage(conversationId, content, fileIds)
+        // 创建 AbortController
+        const controller = new AbortController()
+        setAbortController(controller)
 
-        // 轮询任务结果
-        const task = await chatApi.pollTask(task_id, {
-          interval: 1000,
-          maxAttempts: 120,
-          onProgress: (task) => {
-            // 更新 loading 状态和状态文本
-            const statusMap: Record<string, string> = {
-              pending: '等待中...',
-              processing: 'AI 思考中...',
-              success: '完成',
-              failed: '失败'
-            }
-            setMessages((prev) =>
-              prev.map((msg) =>
-                msg.id === tempAssistantMessage.id
-                  ? {
-                      ...msg,
-                      loading: task.status !== 'success' && task.status !== 'failed',
-                      statusText: statusMap[task.status] || task.status
-                    }
-                  : msg
-              )
-            )
+        // 调试：确认 enableThinking 的值
+        console.log('=== handleSendMessage ===')
+        console.log('enableThinking 值:', enableThinking, '类型:', typeof enableThinking)
+        console.log('复选框元素值:', document.querySelector('input[type="checkbox"]')?.checked)
+
+        // 流式接收消息
+        await chatApi.sendMessageStream(
+          conversationId,
+          content,
+          fileIds.length > 0 ? fileIds : undefined,
+          {
+            signal: controller.signal,
+            callbacks: {
+              onStart: (data) => {
+                console.log('SSE 开始:', data.message_id)
+                // 更新 ref 为新的消息 ID
+                currentMessageIdRef.current = data.message_id
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === tempAssistantId
+                      ? { ...msg, id: data.message_id, statusText: 'AI 思考中...' }
+                      : msg
+                  )
+                )
+              },
+              onChunk: (chunk, thinking) => {
+                // 使用 ref 获取当前消息 ID
+                const currentId = currentMessageIdRef.current
+                if (!currentId) return
+                // 流式追加内容
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === currentId
+                      ? thinking
+                        ? {
+                            ...msg,
+                            thinkingContent: (msg.thinkingContent || '') + chunk,
+                            loading: false,
+                          }
+                        : {
+                            ...msg,
+                            content: msg.content + chunk,
+                            loading: false,
+                            statusText: undefined,
+                          }
+                      : msg
+                  )
+                )
+              },
+              onEnd: (data) => {
+                console.log('SSE 结束:', data.message_id)
+                const currentId = currentMessageIdRef.current
+                if (!currentId) return
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === currentId || msg.id === data.message_id
+                      ? {
+                          ...msg,
+                          id: data.message_id,
+                          loading: false,
+                          statusText: undefined,
+                        }
+                      : msg
+                  )
+                )
+              },
+              onError: (error) => {
+                console.error('SSE 错误:', error)
+                setError(error)
+                const currentId = currentMessageIdRef.current
+                if (!currentId) return
+                setMessages((prev) =>
+                  prev.filter((msg) => msg.id !== currentId)
+                )
+              },
+            },
           },
-        })
-
-        // 更新 assistant 消息
-        if (task.result_message) {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === tempAssistantMessage.id
-                ? {
-                    id: task.result_message.id,
-                    role: 'assistant',
-                    content: task.result_message.content,
-                    timestamp: Date.now(),
-                  }
-                : msg
-            )
-          )
-        }
+          enableThinking
+        )
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : '发送消息失败'
-        setError(errorMessage)
-        // 移除临时的 assistant 消息
-        setMessages((prev) => prev.filter((msg) => msg.id !== tempAssistantMessage.id))
+        if (err instanceof Error && err.name === 'AbortError') {
+          console.log('消息发送已取消')
+          // 清理临时消息
+          const currentId = currentMessageIdRef.current
+          if (currentId) {
+            setMessages((prev) => prev.filter((msg) => msg.id !== currentId))
+          }
+        } else {
+          const errorMessage = err instanceof Error ? err.message : '发送消息失败'
+          setError(errorMessage)
+          // 移除临时的 assistant 消息
+          const currentId = currentMessageIdRef.current
+          if (currentId) {
+            setMessages((prev) => prev.filter((msg) => msg.id !== currentId))
+          }
+        }
       } finally {
         setIsLoading(false)
+        setAbortController(null)
+        currentMessageIdRef.current = null
       }
     },
-    [conversationId]
+    [conversationId, enableThinking]
   )
+
+  // 取消当前请求
+  const handleCancel = useCallback(() => {
+    if (abortController) {
+      abortController.abort()
+      setAbortController(null)
+      setIsLoading(false)
+    }
+  }, [abortController])
 
   // 重置会话
   const handleReset = async () => {
@@ -236,6 +307,20 @@ export function ChatContainer({
         <button onClick={handleReset} className={styles.resetButton} disabled={isLoading}>
           新对话
         </button>
+        <label className={styles.thinkingToggle}>
+          <input
+            type="checkbox"
+            checked={enableThinking}
+            onChange={(e) => setEnableThinking(e.target.checked)}
+            disabled={isLoading}
+          />
+          <span>思考模式</span>
+        </label>
+        {isLoading && abortController && (
+          <button onClick={handleCancel} className={styles.cancelButton}>
+            停止生成
+          </button>
+        )}
       </div>
 
       {/* 聊天界面 */}
