@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { Plus, Square, Brain, X, Loader2 } from 'lucide-react'
+import { clsx } from 'clsx'
 import { ChatInterface } from './ChatInterface'
 import type { Message, Attachment } from '@/types/chat'
 import { chatApi } from '@/services/chatApi'
@@ -33,16 +35,11 @@ export function ChatContainer({
 
   // 初始化会话
   useEffect(() => {
-    // 如果已经初始化过，跳过
-    if (isInitializedRef.current) {
-      return
-    }
-    // 立即设置标志位，防止异步执行期间重复调用
+    if (isInitializedRef.current) return
     isInitializedRef.current = true
 
     const initConversation = async () => {
       if (propConversationId) {
-        // 加载现有会话
         try {
           setIsInitializing(true)
           const detail = await chatApi.getConversation(propConversationId)
@@ -60,7 +57,6 @@ export function ChatContainer({
           setIsInitializing(false)
         }
       } else {
-        // 创建新会话
         try {
           setIsInitializing(true)
           const result = await chatApi.createConversation('新对话')
@@ -75,7 +71,6 @@ export function ChatContainer({
     }
 
     initConversation()
-    // 只依赖 propConversationId
   }, [propConversationId])
 
   // 发送消息
@@ -86,7 +81,6 @@ export function ChatContainer({
         return
       }
 
-      // 添加用户消息到列表
       const userMessage: Message = {
         id: `user-${Date.now()}`,
         role: 'user',
@@ -96,7 +90,6 @@ export function ChatContainer({
       }
       setMessages((prev) => [...prev, userMessage])
 
-      // 添加临时的 assistant 消息（加载中）
       const tempAssistantId = `assistant-temp-${Date.now()}`
       currentMessageIdRef.current = tempAssistantId
       const tempAssistantMessage: Message = {
@@ -113,7 +106,6 @@ export function ChatContainer({
         setIsLoading(true)
         setError(null)
 
-        // 上传文件（如果有）
         let fileIds: string[] = []
         if (attachments && attachments.length > 0) {
           for (const attachment of attachments) {
@@ -124,16 +116,9 @@ export function ChatContainer({
           }
         }
 
-        // 创建 AbortController
         const controller = new AbortController()
         setAbortController(controller)
 
-        // 调试：确认 enableThinking 的值
-        console.log('=== handleSendMessage ===')
-        console.log('enableThinking 值:', enableThinking, '类型:', typeof enableThinking)
-        console.log('复选框元素值:', document.querySelector('input[type="checkbox"]')?.checked)
-
-        // 流式接收消息
         await chatApi.sendMessageStream(
           conversationId,
           content,
@@ -142,8 +127,6 @@ export function ChatContainer({
             signal: controller.signal,
             callbacks: {
               onStart: (data) => {
-                console.log('SSE 开始:', data.message_id)
-                // 更新 ref 为新的消息 ID
                 currentMessageIdRef.current = data.message_id
                 setMessages((prev) =>
                   prev.map((msg) =>
@@ -154,10 +137,8 @@ export function ChatContainer({
                 )
               },
               onChunk: (chunk, thinking) => {
-                // 使用 ref 获取当前消息 ID
                 const currentId = currentMessageIdRef.current
                 if (!currentId) return
-                // 流式追加内容
                 setMessages((prev) =>
                   prev.map((msg) =>
                     msg.id === currentId
@@ -178,7 +159,6 @@ export function ChatContainer({
                 )
               },
               onEnd: (data) => {
-                console.log('SSE 结束:', data.message_id)
                 const currentId = currentMessageIdRef.current
                 if (!currentId) return
                 setMessages((prev) =>
@@ -195,7 +175,6 @@ export function ChatContainer({
                 )
               },
               onError: (error) => {
-                console.error('SSE 错误:', error)
                 setError(error)
                 const currentId = currentMessageIdRef.current
                 if (!currentId) return
@@ -209,8 +188,6 @@ export function ChatContainer({
         )
       } catch (err) {
         if (err instanceof Error && err.name === 'AbortError') {
-          console.log('消息发送已取消')
-          // 清理临时消息
           const currentId = currentMessageIdRef.current
           if (currentId) {
             setMessages((prev) => prev.filter((msg) => msg.id !== currentId))
@@ -218,7 +195,6 @@ export function ChatContainer({
         } else {
           const errorMessage = err instanceof Error ? err.message : '发送消息失败'
           setError(errorMessage)
-          // 移除临时的 assistant 消息
           const currentId = currentMessageIdRef.current
           if (currentId) {
             setMessages((prev) => prev.filter((msg) => msg.id !== currentId))
@@ -233,7 +209,6 @@ export function ChatContainer({
     [conversationId, enableThinking]
   )
 
-  // 取消当前请求
   const handleCancel = useCallback(() => {
     if (abortController) {
       abortController.abort()
@@ -242,7 +217,6 @@ export function ChatContainer({
     }
   }, [abortController])
 
-  // 重置会话
   const handleReset = async () => {
     setMessages([])
     setError(null)
@@ -259,7 +233,6 @@ export function ChatContainer({
     }
   }
 
-  // 处理构建
   const handleBuild = async (xmlContent: string) => {
     try {
       setError(null)
@@ -267,12 +240,7 @@ export function ChatContainer({
       const result = await chatApi.pollBuildTask(taskId, {
         interval: 1000,
         maxAttempts: 120,
-        onProgress: (task) => {
-          // 可选：显示构建进度
-        },
       })
-      // 构建成功
-      console.log('构建成功:', result)
       return result
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : '构建失败'
@@ -284,7 +252,7 @@ export function ChatContainer({
   if (isInitializing) {
     return (
       <div className={styles.loadingContainer}>
-        <div className={styles.spinner} />
+        <Loader2 className={styles.spinner} size={40} />
         <p>初始化对话...</p>
       </div>
     )
@@ -292,38 +260,46 @@ export function ChatContainer({
 
   return (
     <div className={styles.wrapper}>
-      {/* 错误提示 */}
       {error && (
         <div className={styles.errorBanner}>
-          <span>{error}</span>
-          <button onClick={() => setError(null)} className={styles.closeButton}>
-            ×
-          </button>
+          <div className={styles.errorContent}>
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className={styles.closeButton}>
+              <X size={16} />
+            </button>
+          </div>
         </div>
       )}
 
-      {/* 顶部栏 - 悬浮 */}
       <div className={styles.header}>
-        <button onClick={handleReset} className={styles.resetButton} disabled={isLoading}>
-          新对话
-        </button>
-        <label className={styles.thinkingToggle}>
-          <input
-            type="checkbox"
-            checked={enableThinking}
-            onChange={(e) => setEnableThinking(e.target.checked)}
-            disabled={isLoading}
-          />
-          <span>思考模式</span>
-        </label>
-        {isLoading && abortController && (
-          <button onClick={handleCancel} className={styles.cancelButton}>
-            停止生成
+        <div className={styles.headerLeft}>
+          <button onClick={handleReset} className={styles.resetButton} disabled={isLoading}>
+            <Plus size={16} />
+            <span>新对话</span>
           </button>
-        )}
+        </div>
+        
+        <div className={styles.headerRight}>
+          <label className={clsx(styles.thinkingToggle, enableThinking && styles.active)}>
+            <input
+              type="checkbox"
+              checked={enableThinking}
+              onChange={(e) => setEnableThinking(e.target.checked)}
+              disabled={isLoading}
+            />
+            <Brain size={16} />
+            <span>思考模式</span>
+          </label>
+          
+          {isLoading && abortController && (
+            <button onClick={handleCancel} className={styles.cancelButton}>
+              <Square size={14} fill="currentColor" />
+              <span>停止生成</span>
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* 聊天界面 */}
       <ChatInterface
         messages={messages}
         onSendMessage={handleSendMessage}

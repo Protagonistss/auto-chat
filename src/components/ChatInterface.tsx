@@ -1,4 +1,22 @@
 import { useState, useRef, useEffect } from 'react'
+import { 
+  Send, 
+  Paperclip, 
+  X, 
+  ChevronRight, 
+  ChevronDown, 
+  Brain, 
+  User, 
+  Bot,
+  FileText,
+  Image as ImageIcon,
+  Video,
+  Music,
+  FileBox,
+  Cpu,
+  Loader2
+} from 'lucide-react'
+import { clsx } from 'clsx'
 import type { Message, Attachment } from '@/types/chat'
 import styles from './ChatInterface.module.css'
 
@@ -58,16 +76,13 @@ export function ChatInterface({
   }
 
   // 获取文件图标
-  const getFileIcon = (type: string): string => {
-    if (type.startsWith('image/')) return '🖼️'
-    if (type.startsWith('video/')) return '🎬'
-    if (type.startsWith('audio/')) return '🎵'
-    if (type.includes('pdf')) return '📕'
-    if (type.includes('word') || type.includes('document')) return '📘'
-    if (type.includes('excel') || type.includes('spreadsheet')) return '📗'
-    if (type.includes('powerpoint') || type.includes('presentation')) return '📙'
-    if (type.includes('zip') || type.includes('rar') || type.includes('archive')) return '📦'
-    return '📄'
+  const getFileIcon = (type: string) => {
+    if (type.startsWith('image/')) return <ImageIcon size={20} />
+    if (type.startsWith('video/')) return <Video size={20} />
+    if (type.startsWith('audio/')) return <Music size={20} />
+    if (type.includes('pdf') || type.includes('word') || type.includes('document')) return <FileText size={20} />
+    if (type.includes('zip') || type.includes('rar') || type.includes('archive')) return <FileBox size={20} />
+    return <FileText size={20} />
   }
 
   // 处理文件选择
@@ -149,21 +164,18 @@ export function ChatInterface({
 
   // 渲染消息内容（支持代码块）
   const renderContent = (content: string, messageId?: string, isThinkingContent?: boolean) => {
-    // 检测代码块 ```lang...```
     const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g
     const parts: Array<{ type: 'text' | 'code'; content: string; lang?: string }> = []
     let lastIndex = 0
     let match
 
     while ((match = codeBlockRegex.exec(content)) !== null) {
-      // 添加代码块前的文本
       if (match.index > lastIndex) {
         parts.push({
           type: 'text',
           content: content.slice(lastIndex, match.index)
         })
       }
-      // 添加代码块
       parts.push({
         type: 'code',
         lang: match[1] || '',
@@ -172,7 +184,6 @@ export function ChatInterface({
       lastIndex = match.index + match[0].length
     }
 
-    // 添加剩余文本
     if (lastIndex < content.length) {
       parts.push({
         type: 'text',
@@ -180,32 +191,38 @@ export function ChatInterface({
       })
     }
 
-    // 如果没有代码块，返回原始内容
     if (parts.length === 0) {
       return content
     }
 
-    // 渲染带代码块的内容
     return parts.map((part, index) => {
       if (part.type === 'code') {
-        // 调试日志
-        console.log('代码块:', { lang: part.lang, hasOrm: part.content.includes('<orm'), onBuild: !!onBuild, messageId, isThinkingContent })
-        // 支持 xml 和其他包含 XML 配置的代码块
-        // 只有在非思考区域、是 XML、有 onBuild 回调、有 messageId 时才显示构建按钮
         const isXml = (part.lang === 'xml' || (!part.lang && part.content.includes('<orm'))) && onBuild && messageId && !isThinkingContent
         return (
           <div key={index} className={styles.codeBlock}>
-            {part.lang && <div className={styles.codeLang}>{part.lang}</div>}
+            <div className={styles.codeHeader}>
+              {part.lang && <span className={styles.codeLang}>{part.lang}</span>}
+              {isXml && (
+                <button
+                  onClick={() => handleBuild({ id: messageId, role: 'assistant', content, timestamp: 0 })}
+                  disabled={buildingMessageId === messageId}
+                  className={styles.buildButton}
+                >
+                  {buildingMessageId === messageId ? (
+                    <>
+                      <Loader2 size={14} />
+                      <span>构建中...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Cpu size={14} />
+                      <span>构建</span>
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
             <pre><code>{part.content}</code></pre>
-            {isXml && (
-              <button
-                onClick={() => handleBuild({ id: messageId, role: 'assistant', content, timestamp: 0 })}
-                disabled={buildingMessageId === messageId}
-                className={styles.buildButton}
-              >
-                {buildingMessageId === messageId ? '构建中...' : '构建'}
-              </button>
-            )}
           </div>
         )
       }
@@ -234,21 +251,24 @@ export function ChatInterface({
 
   return (
     <div className={styles.chatContainer}>
-      {/* 消息列表区域 */}
       <div className={styles.messagesContainer}>
         <div className={styles.messagesList}>
           {messages.length === 0 ? (
             <div className={styles.emptyState}>
-              <p>开始对话...</p>
+              <div className={styles.emptyIcon}>
+                <Bot size={48} strokeWidth={1.5} />
+              </div>
+              <h3>欢迎使用 AI 助手</h3>
+              <p>有什么我可以帮您的吗？</p>
             </div>
           ) : (
             messages.map((message) => (
               <div
                 key={message.id}
-                className={`${styles.message} ${styles[message.role]}`}
+                className={clsx(styles.message, styles[message.role])}
               >
                 <div className={styles.messageAvatar}>
-                  {message.role === 'user' ? '👤' : '🤖'}
+                  {message.role === 'user' ? <User size={18} /> : <Bot size={18} />}
                 </div>
                 <div className={styles.messageContent}>
                   {message.attachments && message.attachments.length > 0 && (
@@ -271,13 +291,12 @@ export function ChatInterface({
                   {message.loading ? (
                     <div className={styles.messageBubble}>
                       <div className={styles.loadingContainer}>
-                        <div className={styles.loadingSpinner} />
+                        <Loader2 className={styles.spin} size={18} />
                         <span className={styles.loadingText}>{message.statusText || '处理中...'}</span>
                       </div>
                     </div>
                   ) : (
                     <>
-                      {/* 思考内容 */}
                       {message.thinkingContent && (
                         <div className={styles.thinkingSection}>
                           <button
@@ -285,9 +304,10 @@ export function ChatInterface({
                             onClick={() => toggleThinking(message.id)}
                           >
                             <span className={styles.thinkingIcon}>
-                              {expandedThinking.has(message.id) ? '▼' : '▶'}
+                              {expandedThinking.has(message.id) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                             </span>
-                            <span className={styles.thinkingLabel}>🧠 思考过程</span>
+                            <Brain size={14} />
+                            <span className={styles.thinkingLabel}>思考过程</span>
                           </button>
                           {expandedThinking.has(message.id) && (
                             <div className={styles.thinkingContent}>
@@ -296,27 +316,17 @@ export function ChatInterface({
                           )}
                         </div>
                       )}
-                      {/* 回答内容 - 始终显示在思考区域之外 */}
                       {message.content && (
                         <div className={styles.answerSection}>
-                          {message.thinkingContent && (
-                            <div className={styles.answerLabel}>💡 回答</div>
-                          )}
                           <div className={styles.messageBubble}>
                             {renderContent(message.content, message.role === 'assistant' ? message.id : undefined, false)}
                           </div>
                         </div>
                       )}
-                      {/* 调试：显示 content 和 thinkingContent 的长度 */}
-                      {process.env.NODE_ENV === 'development' && (
-                        <div style={{ fontSize: '10px', color: '#999' }}>
-                          debug: content={message.content?.length || 0} thinking={message.thinkingContent?.length || 0}
-                        </div>
-                      )}
                     </>
                   )}
                   <div className={styles.messageTime}>
-                    {new Date(message.timestamp).toLocaleTimeString()}
+                    {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </div>
                 </div>
               </div>
@@ -326,61 +336,65 @@ export function ChatInterface({
         </div>
       </div>
 
-      {/* 输入区域 */}
       <div
-        className={styles.inputContainer}
+        className={clsx(styles.inputContainer, isDragging && styles.dragging)}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {attachments.length > 0 && (
-          <div className={styles.attachmentsPreview}>
-            {attachments.map((attachment) => (
-              <div key={attachment.id} className={styles.attachmentPreview}>
-                <span className={styles.attachmentIcon}>{getFileIcon(attachment.type)}</span>
-                <span className={styles.attachmentName}>{attachment.name}</span>
-                <button
-                  onClick={() => removeAttachment(attachment.id)}
-                  className={styles.removeAttachment}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+        <div className={styles.inputArea}>
+          {attachments.length > 0 && (
+            <div className={styles.attachmentsPreview}>
+              {attachments.map((attachment) => (
+                <div key={attachment.id} className={styles.attachmentPreview}>
+                  <span className={styles.attachmentIcon}>{getFileIcon(attachment.type)}</span>
+                  <span className={styles.attachmentName}>{attachment.name}</span>
+                  <button
+                    onClick={() => removeAttachment(attachment.id)}
+                    className={styles.removeAttachment}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className={styles.inputWrapper}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              onChange={handleFileInputChange}
+              className={styles.fileInput}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className={styles.attachButton}
+              title="添加附件"
+            >
+              <Paperclip size={20} />
+            </button>
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={handleInput}
+              onKeyDown={handleKeyDown}
+              placeholder={isDragging ? '松开以上传文件' : placeholder}
+              disabled={disabled}
+              className={styles.textarea}
+              rows={1}
+            />
+            <button
+              onClick={handleSend}
+              disabled={(!input.trim() && attachments.length === 0) || disabled}
+              className={styles.sendButton}
+            >
+              {disabled ? <Loader2 className={styles.spin} size={20} /> : <Send size={20} />}
+            </button>
           </div>
-        )}
-        <div className={styles.inputWrapper}>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            onChange={handleFileInputChange}
-            className={styles.fileInput}
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className={styles.attachButton}
-            title="添加附件"
-          >
-            📎
-          </button>
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={handleInput}
-            onKeyDown={handleKeyDown}
-            placeholder={isDragging ? '松开以上传文件' : placeholder}
-            disabled={disabled}
-            className={styles.textarea}
-            rows={1}
-          />
-          <button
-            onClick={handleSend}
-            disabled={(!input.trim() && attachments.length === 0) || disabled}
-            className={styles.sendButton}
-          >
-            {disabled ? '...' : '发送'}
-          </button>
+          <div className={styles.inputHint}>
+            按 Enter 发送，Shift + Enter 换行
+          </div>
         </div>
       </div>
     </div>
