@@ -403,6 +403,45 @@
   background-color: #0d8f6f;
 }
 
+.buildButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 已写入状态的按钮 */
+.buildButton.builtButton {
+  background-color: #22c55e;
+}
+
+.buildButton.builtButton:hover:not(:disabled) {
+  background-color: #16a34a;
+}
+
+/* 写入按钮 */
+.writeButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.writeButton:hover:not(:disabled) {
+  background-color: #2563eb;
+}
+
+.writeButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* 附件列表 (消息中) */
 .attachments {
   display: flex;

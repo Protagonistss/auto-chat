@@ -431,6 +431,94 @@ class ChatApiClient {
 
     return response.json()
   }
+
+  /**
+   * 检测 XML 类型
+   */
+  detectXmlType(xmlContent: string): string | null {
+    // 移除代码块标记
+    const cleaned = xmlContent.replace(/```xml\n?/g, '').replace(/```\n?/g, '').trim()
+
+    // 检测 entity 标签 -> orm（放宽条件，只要检测到 entity 标签即可）
+    if (/<entity\b/.test(cleaned)) return 'orm'
+
+    // 检测 setting 标签 -> config
+    if (/<setting\b/.test(cleaned)) return 'config'
+
+    // 检测 endpoint 标签 -> api
+    if (/<endpoint\b/.test(cleaned)) return 'api'
+
+    return null
+  }
+
+  /**
+   * 统一的 XML 构建方法
+   */
+  async buildXml(
+    xmlContent: string,
+    options: {
+      xmlType?: string
+      source?: 'ai' | 'chat' | 'manual'
+      taskId?: string
+    } = {}
+  ): Promise<{
+    success: boolean
+    xml_type: string
+    identifier: string
+    action: 'created' | 'updated'
+    display_name: string
+    message: string
+  }> {
+    const { xmlType, source = 'chat', taskId } = options
+
+    // 自动检测类型（如果未指定）
+    const detectedType = xmlType || this.detectXmlType(xmlContent)
+
+    if (!detectedType) {
+      throw new Error('无法识别 XML 类型，请检查 XML 格式')
+    }
+
+    const response = await fetch(`${this.baseUrl}/xml/merge`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        xml_type: detectedType,
+        xml: xmlContent,
+        source,
+        task_id: taskId,
+      }),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'XML 构建失败' }))
+      throw new Error(error.detail || `XML 构建失败: ${response.statusText}`)
+    }
+
+    return response.json()
+  }
+
+  /**
+   * 获取支持的 XML 类型列表
+   */
+  async getXmlTypes(): Promise<{
+    types: Array<{
+      type: string
+      name: string
+      display_name: string
+      element_tag: string
+      description: string
+    }>
+  }> {
+    const response = await fetch(`${this.baseUrl}/xml/types`)
+
+    if (!response.ok) {
+      throw new Error(`获取 XML 类型失败: ${response.statusText}`)
+    }
+
+    return response.json()
+  }
 }
 
 // 导出单例实例

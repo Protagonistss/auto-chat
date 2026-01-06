@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from 'react'
-import { 
-  Send, 
-  Paperclip, 
-  X, 
-  ChevronRight, 
-  ChevronDown, 
-  Brain, 
-  User, 
+import {
+  Send,
+  Paperclip,
+  X,
+  ChevronRight,
+  ChevronDown,
+  Brain,
+  User,
   Bot,
   FileText,
   Image as ImageIcon,
@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Message, Attachment } from '@/types/chat'
+import { chatApi } from '@/services/chatApi'
 import styles from './ChatInterface.module.css'
 
 interface ChatInterfaceProps {
@@ -39,6 +40,8 @@ export function ChatInterface({
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [isDragging, setIsDragging] = useState(false)
   const [buildingMessageId, setBuildingMessageId] = useState<string | null>(null)
+  const [builtMessageIds, setBuiltMessageIds] = useState<Set<string>>(new Set()) // 已构建的消息
+  const [writtenMessageIds, setWrittenMessageIds] = useState<Set<string>>(new Set()) // 已写入的消息
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -197,29 +200,101 @@ export function ChatInterface({
 
     return parts.map((part, index) => {
       if (part.type === 'code') {
-        const isXml = (part.lang === 'xml' || (!part.lang && part.content.includes('<orm'))) && onBuild && messageId && !isThinkingContent
+        // 检测是否为 XML 代码块
+        const isXmlCode = part.lang === 'xml' || (!part.lang && part.content.includes('<'))
+
+        // 调试日志
+        console.log('[ChatInterface] 代码块信息:', {
+          lang: part.lang,
+          isXmlCode,
+          messageId,
+          isThinkingContent,
+          hasOnBuild: !!onBuild,
+          contentLength: part.content.length,
+          contentPreview: part.content.substring(0, 200),
+          fullContent: part.content
+        })
+
+        const xmlType = isXmlCode && messageId && !isThinkingContent ? chatApi.detectXmlType(part.content) : null
+
+        console.log('[ChatInterface] XML 类型检测结果:', xmlType, {
+          hasNameAttribute: /<entity\s+name=/.test(part.content),
+          hasEntityTag: /<entity/.test(part.content)
+        })
+
+        const canBuild = isXmlCode && xmlType && onBuild && messageId && !isThinkingContent
+        const isWritten = messageId && writtenMessageIds.has(messageId) // 已写入
+        const isBuilt = messageId && builtMessageIds.has(messageId) // 已构建
+        const isBuilding = buildingMessageId === messageId // 正在操作中
+
+        console.log('[ChatInterface] 按钮状态:', { canBuild, isWritten, isBuilt, isBuilding })
+
+        // 类型显示名称映射
+        const typeLabels: Record<string, string> = {
+          'orm': 'ORM',
+          'config': '配置',
+          'api': 'API'
+        }
+
         return (
           <div key={index} className={styles.codeBlock}>
             <div className={styles.codeHeader}>
-              {part.lang && <span className={styles.codeLang}>{part.lang}</span>}
-              {isXml && (
-                <button
-                  onClick={() => handleBuild({ id: messageId, role: 'assistant', content, timestamp: 0 })}
-                  disabled={buildingMessageId === messageId}
-                  className={styles.buildButton}
-                >
-                  {buildingMessageId === messageId ? (
-                    <>
-                      <Loader2 size={14} />
-                      <span>构建中...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Cpu size={14} />
-                      <span>构建</span>
-                    </>
+              <span className={styles.codeLang}>{part.lang || (isXmlCode ? 'xml' : '')}</span>
+              {canBuild && (
+                <>
+                  {/* 写入按钮：未写入时显示 */}
+                  {!isWritten && (
+                    <button
+                      onClick={() => handleWriteXml(part.content, messageId!)}
+                      disabled={isBuilding}
+                      className={styles.writeButton}
+                    >
+                      {isBuilding ? (
+                        <>
+                          <Loader2 size={14} className={styles.spin} />
+                          <span>写入中...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Cpu size={14} />
+                          <span>写入 {typeLabels[xmlType] || xmlType}</span>
+                        </>
+                      )}
+                    </button>
                   )}
-                </button>
+
+                  {/* 构建按钮：已写入但未构建时显示 */}
+                  {isWritten && !isBuilt && (
+                    <button
+                      onClick={() => handleBuildXml(messageId!)}
+                      disabled={isBuilding}
+                      className={styles.buildButton}
+                    >
+                      {isBuilding ? (
+                        <>
+                          <Loader2 size={14} className={styles.spin} />
+                          <span>构建中...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Cpu size={14} />
+                          <span>构建</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {/* 已构建状态 */}
+                  {isBuilt && (
+                    <button
+                      disabled
+                      className={clsx(styles.buildButton, styles.builtButton)}
+                    >
+                      <Cpu size={14} />
+                      <span>已构建</span>
+                    </button>
+                  )}
+                </>
               )}
             </div>
             <pre><code>{part.content}</code></pre>
@@ -230,20 +305,34 @@ export function ChatInterface({
     })
   }
 
-  // 提取 XML 代码块内容
-  const extractXmlContent = (content: string): string | null => {
-    const match = content.match(/```xml\n([\s\S]*?)```/)
-    return match ? match[1].trim() : null
+  // 处理写入点击
+  const handleWriteXml = async (xmlContent: string, messageId: string) => {
+    if (!onBuild) return
+
+    setBuildingMessageId(messageId)
+    try {
+      await onBuild(xmlContent)
+      // 写入成功后，标记为已写入
+      setWrittenMessageIds(prev => new Set(prev).add(messageId))
+    } catch (error) {
+      console.error('写入失败:', error)
+      throw error
+    } finally {
+      setBuildingMessageId(null)
+    }
   }
 
   // 处理构建点击
-  const handleBuild = async (message: Message) => {
-    const xmlContent = extractXmlContent(message.content)
-    if (!xmlContent || !onBuild) return
-
-    setBuildingMessageId(message.id)
+  const handleBuildXml = async (messageId: string) => {
+    // 这里应该调用实际的构建API
+    // 目前先标记为已构建
+    setBuildingMessageId(messageId)
     try {
-      await onBuild(xmlContent)
+      // TODO: 调用构建API
+      await new Promise(resolve => setTimeout(resolve, 1000)) // 模拟构建过程
+      setBuiltMessageIds(prev => new Set(prev).add(messageId))
+    } catch (error) {
+      console.error('构建失败:', error)
     } finally {
       setBuildingMessageId(null)
     }

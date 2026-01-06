@@ -236,7 +236,8 @@ export function ChatContainer({
   const handleBuild = async (xmlContent: string) => {
     try {
       setError(null)
-      const result = await chatApi.writeOrmEntity(xmlContent, { source: 'chat' })
+      // 使用新的统一 buildXml 方法
+      const result = await chatApi.buildXml(xmlContent, { source: 'chat' })
       return result
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : '构建失败'
