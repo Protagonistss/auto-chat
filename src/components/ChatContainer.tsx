@@ -236,11 +236,7 @@ export function ChatContainer({
   const handleBuild = async (xmlContent: string) => {
     try {
       setError(null)
-      const taskId = await chatApi.submitBuildTask(xmlContent)
-      const result = await chatApi.pollBuildTask(taskId, {
-        interval: 1000,
-        maxAttempts: 120,
-      })
+      const result = await chatApi.writeOrmEntity(xmlContent, { source: 'chat' })
       return result
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : '构建失败'

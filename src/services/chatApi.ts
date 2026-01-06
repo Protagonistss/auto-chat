@@ -394,6 +394,43 @@ class ChatApiClient {
 
     throw new Error('构建任务超时')
   }
+
+  /**
+   * 写入 ORM Entity 到 app.orm.xml
+   */
+  async writeOrmEntity(
+    xmlContent: string,
+    options: {
+      source?: 'ai' | 'chat' | 'manual'
+      taskId?: string
+    } = {}
+  ): Promise<{
+    success: boolean
+    entity_name: string
+    action: 'created' | 'updated'
+    message: string
+  }> {
+    const { source = 'chat', taskId } = options
+
+    const response = await fetch(`${this.baseUrl}/orm/entity`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        xml: xmlContent,
+        source,
+        task_id: taskId,
+      }),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: '写入 ORM Entity 失败' }))
+      throw new Error(error.detail || `写入 ORM Entity 失败: ${response.statusText}`)
+    }
+
+    return response.json()
+  }
 }
 
 // 导出单例实例
