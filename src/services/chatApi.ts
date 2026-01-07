@@ -562,7 +562,7 @@ class ChatApiClient {
   }
 
   /**
-   * 导出 Excel
+   * 导出 Excel（非流式）
    */
   async exportExcel(outputName: string = 'app.orm.xlsx'): Promise<void> {
     const response = await fetch(`${this.baseUrl}/build/export/excel`, {
@@ -597,6 +597,88 @@ class ChatApiClient {
       // JSON 响应
       const data = await response.json()
       console.log('导出结果:', data)
+    }
+  }
+
+  /**
+   * 流式导出 Excel
+   */
+  async exportExcelStream(
+    outputName: string,
+    callbacks: {
+      onLog: (line: string) => void
+      onComplete: (success: boolean, message: string, outputName?: string) => void
+      onError: (error: string) => void
+    },
+    signal?: AbortSignal
+  ): Promise<void> {
+    console.log('开始流式导出Excel:', outputName)
+
+    const response = await fetch(`${this.baseUrl}/build/export/excel/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        output_name: outputName
+      }),
+      signal,
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: '导出 Excel 失败' }))
+      throw new Error(error.detail || `导出 Excel 失败: ${response.statusText}`)
+    }
+
+    const reader = response.body?.getReader()
+    if (!reader) {
+      throw new Error('无法读取响应流')
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        // 按行处理 SSE 数据
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.substring(6)
+
+            try {
+              const event = JSON.parse(data)
+
+              if (event.type === 'log') {
+                callbacks.onLog(event.line)
+              } else if (event.type === 'complete') {
+                console.log(`导出完成: success=${event.success}, message=${event.message}`)
+                callbacks.onComplete(event.success, event.message, event.output_name)
+                return
+              }
+            } catch (e) {
+              console.error('解析 SSE 事件失败:', e, 'data:', data)
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('流式导出异常:', error)
+      if (error instanceof Error && error.name === 'AbortError') {
+        callbacks.onError('请求已取消')
+        throw error
+      }
+      throw error
+    } finally {
+      reader.releaseLock()
     }
   }
 

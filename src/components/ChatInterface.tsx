@@ -48,6 +48,7 @@ export function ChatInterface({
   const [expandedBuildLogs, setExpandedBuildLogs] = useState<Set<string>>(new Set()) // 展开的构建日志
   const [devServerRunning, setDevServerRunning] = useState<Set<string>>(new Set()) // 运行中的开发服务器
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
+  const [exportingMessageIds, setExportingMessageIds] = useState<Set<string>>(new Set()) // 正在导出的消息
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -335,11 +336,20 @@ export function ChatInterface({
                 {isBuilt && !isBuilding && (
                   <button
                     onClick={() => handleExportExcel(messageId!)}
-                    disabled={false}
+                    disabled={exportingMessageIds.has(messageId!)}
                     className={styles.exportButton}
                   >
-                    <FileText size={14} />
-                    <span>导出 Excel</span>
+                    {exportingMessageIds.has(messageId!) ? (
+                      <>
+                        <Loader2 size={14} className={styles.spin} />
+                        <span>导出中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <FileText size={14} />
+                        <span>导出 Excel</span>
+                      </>
+                    )}
                   </button>
                 )}
 
@@ -543,19 +553,119 @@ export function ChatInterface({
   const handleExportExcel = async (messageId: string) => {
     console.log('[handleExportExcel] 导出 Excel, messageId:', messageId)
 
+    const outputName = 'app.orm.xlsx'
+    const exportResultKey = `${messageId}_export`
+
+    // 标记为导出中
+    setExportingMessageIds(prev => new Set(prev).add(messageId))
+
+    // 初始化导出结果
+    setBuildResults(prev => ({
+      ...prev,
+      [exportResultKey]: {
+        success: null,
+        command: '导出 Excel',
+        exit_code: null,
+        stdout: '',
+        stderr: '',
+        execution_time: 0,
+        message: '正在导出...',
+        phase: 'build'
+      }
+    }))
+
     try {
-      // 使用配置中的 XML 路径
-      const outputName = 'app.orm.xlsx'
+      await chatApi.exportExcelStream(
+        outputName,
+        {
+          onLog: (line: string) => {
+            // 实时更新日志
+            setBuildResults(prev => {
+              const current = prev[exportResultKey]
+              return {
+                ...prev,
+                [exportResultKey]: {
+                  ...current,
+                  stdout: current.stdout + line + '\n'
+                }
+              }
+            })
+          },
+          onComplete: (success: boolean, message: string, outputName?: string) => {
+            // 更新完成状态
+            setBuildResults(prev => {
+              const current = prev[exportResultKey]
+              return {
+                ...prev,
+                [exportResultKey]: {
+                  ...current,
+                  success,
+                  message,
+                  exit_code: success ? 0 : -1
+                }
+              }
+            })
 
-      console.log('[handleExportExcel] 开始导出:', { outputName })
+            // 移除导出中状态
+            setExportingMessageIds(prev => {
+              const next = new Set(prev)
+              next.delete(messageId)
+              return next
+            })
 
-      // 调用 API 导出 Excel（XML 路径从后端配置读取）
-      await chatApi.exportExcel(outputName)
-
-      console.log('[handleExportExcel] 导出成功')
+            // 如果导出成功，触发文件下载
+            if (success && outputName) {
+              // 创建下载链接
+              const downloadUrl = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/build/export/excel/download?filename=${outputName}`
+              const a = document.createElement('a')
+              a.href = downloadUrl
+              a.download = outputName
+              document.body.appendChild(a)
+              a.click()
+              document.body.removeChild(a)
+            }
+          },
+          onError: (error: string) => {
+            console.error('[handleExportExcel] 导出失败:', error)
+            setBuildResults(prev => {
+              const current = prev[exportResultKey]
+              return {
+                ...prev,
+                [exportResultKey]: {
+                  ...current,
+                  success: false,
+                  message: error,
+                  exit_code: -1
+                }
+              }
+            })
+            setExportingMessageIds(prev => {
+              const next = new Set(prev)
+              next.delete(messageId)
+              return next
+            })
+          }
+        }
+      )
     } catch (error) {
       console.error('[handleExportExcel] 导出失败:', error)
-      alert(`导出失败: ${error instanceof Error ? error.message : String(error)}`)
+      setBuildResults(prev => {
+        const current = prev[exportResultKey]
+        return {
+          ...prev,
+          [exportResultKey]: {
+            ...current,
+            success: false,
+            message: error instanceof Error ? error.message : String(error),
+            exit_code: -1
+          }
+        }
+      })
+      setExportingMessageIds(prev => {
+        const next = new Set(prev)
+        next.delete(messageId)
+        return next
+      })
     }
   }
 
@@ -821,6 +931,57 @@ export function ChatInterface({
                               className={styles.buildLog}
                             >
                               {buildResults[message.id].stdout || buildResults[message.id].stderr}
+                            </pre>
+                          </details>
+                        </div>
+                      )}
+                      {/* 导出 Excel 结果 */}
+                      {buildResults[`${message.id}_export`] && (
+                        <div className={styles.buildResult}>
+                          <div className={clsx(
+                            styles.buildStatus,
+                            buildResults[`${message.id}_export`].success === true ? styles.success :
+                            buildResults[`${message.id}_export`].success === false ? styles.error :
+                            styles.building
+                          )}>
+                            {(() => {
+                              const result = buildResults[`${message.id}_export`]
+                              if (result.success === true) return '✓ Excel 导出成功'
+                              if (result.success === false) return '✗ 导出失败'
+                              return '⟳ 正在导出...'
+                            })()}
+                          </div>
+                          <details
+                            className={styles.buildDetails}
+                            open={exportingMessageIds.has(message.id)}
+                            onToggle={(e) => {
+                              const isOpen = (e.target as HTMLDetailsElement).open
+                              setExpandedBuildLogs(prev => {
+                                const next = new Set(prev)
+                                if (isOpen) {
+                                  next.add(`${message.id}_export`)
+                                } else {
+                                  next.delete(`${message.id}_export`)
+                                }
+                                return next
+                              })
+                            }}
+                          >
+                            <summary>导出日志</summary>
+                            <pre
+                              ref={(el) => {
+                                // 自动滚动到底部（导出中）
+                                if (el && exportingMessageIds.has(message.id)) {
+                                  requestAnimationFrame(() => {
+                                    if (el) {
+                                      el.scrollTop = el.scrollHeight
+                                    }
+                                  })
+                                }
+                              }}
+                              className={styles.buildLog}
+                            >
+                              {buildResults[`${message.id}_export`].stdout}
                             </pre>
                           </details>
                         </div>
