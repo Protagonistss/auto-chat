@@ -251,107 +251,121 @@ export function ChatInterface({
           <div key={index} className={styles.codeBlock}>
             <div className={styles.codeHeader}>
               <span className={styles.codeLang}>{part.lang || (isXmlCode ? 'xml' : '')}</span>
-              {canBuild && (
-                <>
-                  {/* 写入按钮：未写入时显示 */}
-                  {!isWritten && (
-                    <button
-                      onClick={() => handleWriteXml(part.content, messageId!)}
-                      disabled={isBuilding}
-                      className={styles.writeButton}
-                    >
-                      {isBuilding ? (
-                        <>
-                          <Loader2 size={14} className={styles.spin} />
-                          <span>写入中...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Cpu size={14} />
-                          <span>写入 {typeLabels[xmlType] || xmlType}</span>
-                        </>
-                      )}
-                    </button>
-                  )}
-
-                  {/* 构建按钮：已写入但未构建时显示 */}
-                  {isWritten && !isBuilt && (
-                    <button
-                      onClick={() => handleBuildXml(messageId!)}
-                      disabled={isBuilding}
-                      className={styles.buildButton}
-                    >
-                      {isBuilding ? (
-                        <>
-                          <Loader2 size={14} className={styles.spin} />
-                          <span>构建中...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Cpu size={14} />
-                          <span>构建</span>
-                        </>
-                      )}
-                    </button>
-                  )}
-
-                  {/* 启动服务按钮：已构建且服务未运行时显示 */}
-                  {canStartDev && (
-                    <button
-                      onClick={() => startQuarkusDevServer(messageId!)}
-                      disabled={isStartingDev}
-                      className={styles.buildButton}
-                    >
-                      {isStartingDev ? (
-                        <>
-                          <Loader2 size={14} className={styles.spin} />
-                          <span>启动中...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Cpu size={14} />
-                          <span>启动服务</span>
-                        </>
-                      )}
-                    </button>
-                  )}
-
-                  {/* 服务运行中状态 - 显示停止按钮 */}
-                  {devServerRunning.has(messageId!) && (
-                    <button
-                      onClick={() => stopQuarkusDevServer(messageId!)}
-                      className={styles.stopButton}
-                    >
-                      <Square size={14} fill="currentColor" />
-                      <span>停止服务</span>
-                    </button>
-                  )}
-
-                  {/* 服务启动中状态 */}
-                  {isStartingDev && !devServerRunning.has(messageId!) && buildResult?.phase === 'dev' && (
-                    <button
-                      disabled
-                      className={clsx(styles.buildButton, styles.builtButton)}
-                    >
-                      <Loader2 size={14} className={styles.spin} />
-                      <span>启动中...</span>
-                    </button>
-                  )}
-
-                  {/* 已构建但无法启动服务的状态（可选） */}
-                  {isBuilt && !canStartDev && !isStartingDev && !devServerRunning.has(messageId!) && (
-                    <button
-                      disabled
-                      className={clsx(styles.buildButton, styles.builtButton)}
-                    >
-                      <Cpu size={14} />
-                      <span>已构建</span>
-                    </button>
-                  )}
-                </>
-              )}
             </div>
             <pre><code>{part.content}</code></pre>
+
+            {/* 按钮区域：移到代码块下方 */}
+            {canBuild && (
+              <div className={styles.codeActions}>
+                {/* 写入按钮：未写入时显示 */}
+                {!isWritten && (
+                  <button
+                    onClick={() => handleWriteXml(part.content, messageId!)}
+                    disabled={isBuilding}
+                    className={styles.writeButton}
+                  >
+                    {isBuilding ? (
+                      <>
+                        <Loader2 size={14} className={styles.spin} />
+                        <span>写入中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cpu size={14} />
+                        <span>写入 {typeLabels[xmlType] || xmlType}</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {/* 构建按钮：已写入但未构建时显示 */}
+                {isWritten && !isBuilt && (
+                  <button
+                    onClick={() => handleBuildXml(messageId!)}
+                    disabled={isBuilding}
+                    className={styles.buildButton}
+                  >
+                    {isBuilding ? (
+                      <>
+                        <Loader2 size={14} className={styles.spin} />
+                        <span>构建中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cpu size={14} />
+                        <span>构建</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {/* 启动服务按钮：已构建且服务未运行时显示 */}
+                {canStartDev && (
+                  <button
+                    onClick={() => startQuarkusDevServer(messageId!)}
+                    disabled={isStartingDev}
+                    className={styles.buildButton}
+                  >
+                    {isStartingDev ? (
+                      <>
+                        <Loader2 size={14} className={styles.spin} />
+                        <span>启动中...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Cpu size={14} />
+                        <span>启动服务</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {/* 服务运行中状态 - 显示停止按钮 */}
+                {devServerRunning.has(messageId!) && (
+                  <button
+                    onClick={() => stopQuarkusDevServer(messageId!)}
+                    className={styles.stopButton}
+                  >
+                    <Square size={14} fill="currentColor" />
+                    <span>停止服务</span>
+                  </button>
+                )}
+
+                {/* 导出 Excel 按钮：已构建后显示 */}
+                {isBuilt && !isBuilding && (
+                  <button
+                    onClick={() => handleExportExcel(messageId!)}
+                    disabled={false}
+                    className={styles.exportButton}
+                  >
+                    <FileText size={14} />
+                    <span>导出 Excel</span>
+                  </button>
+                )}
+
+                {/* 服务启动中状态 */}
+                {isStartingDev && !devServerRunning.has(messageId!) && buildResult?.phase === 'dev' && (
+                  <button
+                    disabled
+                    className={clsx(styles.buildButton, styles.builtButton)}
+                  >
+                    <Loader2 size={14} className={styles.spin} />
+                    <span>启动中...</span>
+                  </button>
+                )}
+
+                {/* 已构建但无法启动服务的状态（可选） */}
+                {isBuilt && !canStartDev && !isStartingDev && !devServerRunning.has(messageId!) && (
+                  <button
+                    disabled
+                    className={clsx(styles.buildButton, styles.builtButton)}
+                  >
+                    <Cpu size={14} />
+                    <span>已构建</span>
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )
       }
@@ -522,6 +536,26 @@ export function ChatInterface({
         next.delete(messageId)
         return next
       })
+    }
+  }
+
+  // 处理导出 Excel
+  const handleExportExcel = async (messageId: string) => {
+    console.log('[handleExportExcel] 导出 Excel, messageId:', messageId)
+
+    try {
+      // 使用配置中的 XML 路径
+      const outputName = 'app.orm.xlsx'
+
+      console.log('[handleExportExcel] 开始导出:', { outputName })
+
+      // 调用 API 导出 Excel（XML 路径从后端配置读取）
+      await chatApi.exportExcel(outputName)
+
+      console.log('[handleExportExcel] 导出成功')
+    } catch (error) {
+      console.error('[handleExportExcel] 导出失败:', error)
+      alert(`导出失败: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
 
@@ -740,12 +774,6 @@ export function ChatInterface({
                             {/* 智能状态显示 */}
                             {(() => {
                               const result = buildResults[message.id]
-                              const wasRunning = writtenMessageIds.has(message.id) && builtMessageIds.has(message.id)
-
-                              // 服务已停止（之前构建过，但现在没有运行）
-                              if (result.success === true && result.phase === 'build' && wasRunning && !devServerRunning.has(message.id)) {
-                                return '✓ 服务已停止'
-                              }
 
                               // 开发服务器运行中
                               if (devServerRunning.has(message.id) && result.phase === 'dev') {

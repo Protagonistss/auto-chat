@@ -562,6 +562,45 @@ class ChatApiClient {
   }
 
   /**
+   * 导出 Excel
+   */
+  async exportExcel(outputName: string = 'app.orm.xlsx'): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/build/export/excel`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        output_name: outputName
+      }),
+    })
+
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.detail || `导出 Excel 失败: ${response.statusText}`)
+    }
+
+    // 检查响应是否是文件下载
+    const contentType = response.headers.get('content-type')
+    if (contentType?.includes('spreadsheetml')) {
+      // 下载文件
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = outputName
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    } else {
+      // JSON 响应
+      const data = await response.json()
+      console.log('导出结果:', data)
+    }
+  }
+
+  /**
    * 执行构建命令
    */
   async executeBuildCommand(request: BuildCommandRequest): Promise<BuildCommandResponse> {

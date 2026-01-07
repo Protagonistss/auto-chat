@@ -384,6 +384,17 @@
   line-height: 1.6;
 }
 
+/* 按钮区域（在代码块下方） */
+.codeActions {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  background-color: #1e293b;
+  border-top: 1px solid #334155;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 .buildButton {
   display: flex;
   align-items: center;
@@ -463,6 +474,31 @@
 }
 
 .stopButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* 导出 Excel 按钮 */
+.exportButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background-color: #f59e0b;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.exportButton:hover:not(:disabled) {
+  background-color: #d97706;
+}
+
+.exportButton:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
