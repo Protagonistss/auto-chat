@@ -62,6 +62,24 @@ export interface SendMessageRequest {
   file_ids?: string[]
 }
 
+// 构建命令类型
+export interface BuildCommandRequest {
+  command: string
+  cwd?: string
+  timeout?: number
+  command_type?: string
+}
+
+export interface BuildCommandResponse {
+  success: boolean | null  // null = 构建中, true = 成功, false = 失败
+  command: string
+  exit_code: number | null
+  stdout: string
+  stderr: string
+  execution_time: number
+  message: string
+}
+
 /**
  * API 客户端类
  */
@@ -518,6 +536,102 @@ class ChatApiClient {
     }
 
     return response.json()
+  }
+
+  /**
+   * 执行构建命令
+   */
+  async executeBuildCommand(request: BuildCommandRequest): Promise<BuildCommandResponse> {
+    const response = await fetch(`${this.baseUrl}/build/execute`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: '执行构建命令失败' }))
+      throw new Error(error.detail || `执行构建命令失败: ${response.statusText}`)
+    }
+
+    return response.json()
+  }
+
+  /**
+   * 流式执行构建命令 (SSE)
+   */
+  async executeBuildCommandStream(
+    request: BuildCommandRequest,
+    callbacks: {
+      onLog: (line: string) => void
+      onComplete: (success: boolean, message: string) => void
+      onError: (error: string) => void
+    },
+    signal?: AbortSignal
+  ): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/build/execute/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(request),
+      signal,
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: '执行构建命令失败' }))
+      throw new Error(error.detail || `执行构建命令失败: ${response.statusText}`)
+    }
+
+    const reader = response.body?.getReader()
+    if (!reader) {
+      throw new Error('无法读取响应流')
+    }
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+
+        // 按行处理 SSE 数据
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.substring(6)
+
+            try {
+              const event = JSON.parse(data)
+
+              if (event.type === 'log') {
+                callbacks.onLog(event.line)
+              } else if (event.type === 'complete') {
+                callbacks.onComplete(event.success, event.message)
+                return
+              }
+            } catch (e) {
+              console.error('解析 SSE 事件失败:', e)
+            }
+          }
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        callbacks.onError('请求已取消')
+        throw error
+      }
+      throw error
+    } finally {
+      reader.releaseLock()
+    }
   }
 }
 

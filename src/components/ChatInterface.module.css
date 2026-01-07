@@ -518,3 +518,75 @@
 .fileInput {
   display: none;
 }
+
+/* 构建结果容器 */
+.buildResult {
+  margin-top: 8px;
+  padding: 12px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+/* 构建状态 */
+.buildStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.buildStatus.success {
+  color: #10a37f;
+}
+
+.buildStatus.error {
+  color: #ef4444;
+}
+
+.buildStatus.building {
+  color: #3b82f6;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.executionTime {
+  color: #6b7280;
+  font-weight: 400;
+  font-size: 12px;
+}
+
+/* 构建详情 */
+.buildDetails summary {
+  cursor: pointer;
+  color: #3b82f6;
+  user-select: none;
+  padding: 4px 0;
+}
+
+.buildDetails summary:hover {
+  color: #2563eb;
+}
+
+.buildLog {
+  margin: 8px 0 0 0;
+  padding: 12px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 300px;
+  overflow-y: auto;
+}

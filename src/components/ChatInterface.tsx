@@ -18,6 +18,7 @@ import {
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Message, Attachment } from '@/types/chat'
+import type { BuildCommandResponse } from '@/services/chatApi'
 import { chatApi } from '@/services/chatApi'
 import styles from './ChatInterface.module.css'
 
@@ -42,6 +43,8 @@ export function ChatInterface({
   const [buildingMessageId, setBuildingMessageId] = useState<string | null>(null)
   const [builtMessageIds, setBuiltMessageIds] = useState<Set<string>>(new Set()) // 已构建的消息
   const [writtenMessageIds, setWrittenMessageIds] = useState<Set<string>>(new Set()) // 已写入的消息
+  const [buildResults, setBuildResults] = useState<Record<string, BuildCommandResponse>>({}) // 构建结果
+  const [expandedBuildLogs, setExpandedBuildLogs] = useState<Set<string>>(new Set()) // 展开的构建日志
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -324,15 +327,88 @@ export function ChatInterface({
 
   // 处理构建点击
   const handleBuildXml = async (messageId: string) => {
-    // 这里应该调用实际的构建API
-    // 目前先标记为已构建
     setBuildingMessageId(messageId)
+    // 展开构建日志
+    setExpandedBuildLogs(prev => new Set(prev).add(messageId))
+    const startTime = Date.now()
+    const logs: string[] = []
+
     try {
-      // TODO: 调用构建API
-      await new Promise(resolve => setTimeout(resolve, 1000)) // 模拟构建过程
-      setBuiltMessageIds(prev => new Set(prev).add(messageId))
+      // 调用流式构建 API
+      await chatApi.executeBuildCommandStream(
+        {
+          command: 'mvn clean install -DskipTests',
+          command_type: 'maven',
+          timeout: 300
+        },
+        {
+          onLog: (line: string) => {
+            // 实时更新日志
+            logs.push(line)
+            setBuildResults(prev => ({
+              ...prev,
+              [messageId]: {
+                success: null, // 构建中
+                command: 'mvn clean install -DskipTests',
+                exit_code: null,
+                stdout: logs.join('\n'),
+                stderr: '',
+                execution_time: (Date.now() - startTime) / 1000,
+                message: '构建中...'
+              }
+            }))
+          },
+          onComplete: (success: boolean, message: string) => {
+            const executionTime = (Date.now() - startTime) / 1000
+            setBuildResults(prev => ({
+              ...prev,
+              [messageId]: {
+                success,
+                command: 'mvn clean install -DskipTests',
+                exit_code: success ? 0 : -1,
+                stdout: logs.join('\n'),
+                stderr: '',
+                execution_time: executionTime,
+                message
+              }
+            }))
+            if (success) {
+              setBuiltMessageIds(prev => new Set(prev).add(messageId))
+            }
+          },
+          onError: (error: string) => {
+            console.error('构建流式错误:', error)
+            setBuildResults(prev => ({
+              ...prev,
+              [messageId]: {
+                success: false,
+                command: 'mvn clean install -DskipTests',
+                exit_code: -1,
+                stdout: logs.join('\n'),
+                stderr: error,
+                execution_time: (Date.now() - startTime) / 1000,
+                message: `构建错误: ${error}`
+              }
+            }))
+          }
+        }
+      )
     } catch (error) {
       console.error('构建失败:', error)
+      const executionTime = (Date.now() - startTime) / 1000
+      setBuildResults(prev => ({
+        ...prev,
+        [messageId]: {
+          success: false,
+          command: 'mvn clean install -DskipTests',
+          exit_code: -1,
+          stdout: logs.join('\n'),
+          stderr: error instanceof Error ? error.message : String(error),
+          execution_time: executionTime,
+          message: `构建失败: ${error instanceof Error ? error.message : String(error)}`
+        }
+      }))
+      throw error
     } finally {
       setBuildingMessageId(null)
     }
@@ -410,6 +486,52 @@ export function ChatInterface({
                           <div className={styles.messageBubble}>
                             {renderContent(message.content, message.role === 'assistant' ? message.id : undefined, false)}
                           </div>
+                        </div>
+                      )}
+                      {buildResults[message.id] && (
+                        <div className={styles.buildResult}>
+                          <div className={clsx(
+                            styles.buildStatus,
+                            buildResults[message.id].success === true ? styles.success :
+                            buildResults[message.id].success === false ? styles.error :
+                            styles.building
+                          )}>
+                            {buildResults[message.id].success === true ? '✓ 构建成功' :
+                             buildResults[message.id].success === false ? '✗ 构建失败' :
+                             '⟳ 构建中...'}
+                            <span className={styles.executionTime}>
+                              ({buildResults[message.id].execution_time.toFixed(2)}s)
+                            </span>
+                          </div>
+                          <details
+                            className={styles.buildDetails}
+                            open={expandedBuildLogs.has(message.id)}
+                            onToggle={(e) => {
+                              const isOpen = (e.target as HTMLDetailsElement).open
+                              setExpandedBuildLogs(prev => {
+                                const next = new Set(prev)
+                                if (isOpen) {
+                                  next.add(message.id)
+                                } else {
+                                  next.delete(message.id)
+                                }
+                                return next
+                              })
+                            }}
+                          >
+                            <summary>构建日志</summary>
+                            <pre
+                              ref={(el) => {
+                                // 自动滚动到底部（仅在构建中或刚展开时）
+                                if (el && buildingMessageId === message.id) {
+                                  el.scrollTop = el.scrollHeight
+                                }
+                              }}
+                              className={styles.buildLog}
+                            >
+                              {buildResults[message.id].stdout || buildResults[message.id].stderr}
+                            </pre>
+                          </details>
                         </div>
                       )}
                     </>
