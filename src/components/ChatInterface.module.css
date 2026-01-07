@@ -442,6 +442,31 @@
   cursor: not-allowed;
 }
 
+/* 停止服务按钮 */
+.stopButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background-color: #ef4444;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.stopButton:hover:not(:disabled) {
+  background-color: #dc2626;
+}
+
+.stopButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* 附件列表 (消息中) */
 .attachments {
   display: flex;
@@ -563,6 +588,26 @@
   color: #6b7280;
   font-weight: 400;
   font-size: 12px;
+}
+
+.devServerStatus {
+  color: #f59e0b;
+  font-weight: 500;
+  font-size: 12px;
+  margin-left: 12px;
+  padding: 2px 8px;
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 4px;
+  animation: glow 2s ease-in-out infinite;
+}
+
+@keyframes glow {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
 }
 
 /* 构建详情 */

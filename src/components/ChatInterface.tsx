@@ -14,7 +14,8 @@ import {
   Music,
   FileBox,
   Cpu,
-  Loader2
+  Loader2,
+  Square
 } from 'lucide-react'
 import { clsx } from 'clsx'
 import type { Message, Attachment } from '@/types/chat'
@@ -45,10 +46,12 @@ export function ChatInterface({
   const [writtenMessageIds, setWrittenMessageIds] = useState<Set<string>>(new Set()) // 已写入的消息
   const [buildResults, setBuildResults] = useState<Record<string, BuildCommandResponse>>({}) // 构建结果
   const [expandedBuildLogs, setExpandedBuildLogs] = useState<Set<string>>(new Set()) // 展开的构建日志
+  const [devServerRunning, setDevServerRunning] = useState<Set<string>>(new Set()) // 运行中的开发服务器
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set())
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const devServerAbortControllersRef = useRef<Record<string, AbortController>>({}) // 存储开发服务器的 AbortController
 
   // 切换思考内容展开状态
   const toggleThinking = (messageId: string) => {
@@ -228,9 +231,14 @@ export function ChatInterface({
         const canBuild = isXmlCode && xmlType && onBuild && messageId && !isThinkingContent
         const isWritten = messageId && writtenMessageIds.has(messageId) // 已写入
         const isBuilt = messageId && builtMessageIds.has(messageId) // 已构建
-        const isBuilding = buildingMessageId === messageId // 正在操作中
+        const isBuilding = buildingMessageId === messageId // 正在构建中
 
-        console.log('[ChatInterface] 按钮状态:', { canBuild, isWritten, isBuilt, isBuilding })
+        // 检查是否可以启动服务：已构建成功 + 不是正在构建中 + 不是正在运行服务
+        const buildResult = messageId ? buildResults[messageId] : null
+        const canStartDev = messageId && isWritten && isBuilt && !isBuilding && !devServerRunning.has(messageId)
+        const isStartingDev = messageId && devServerRunning.has(messageId) // 正在启动开发服务器
+
+        console.log('[ChatInterface] 按钮状态:', { canBuild, isWritten, isBuilt, isBuilding, canStartDev, isStartingDev })
 
         // 类型显示名称映射
         const typeLabels: Record<string, string> = {
@@ -287,8 +295,51 @@ export function ChatInterface({
                     </button>
                   )}
 
-                  {/* 已构建状态 */}
-                  {isBuilt && (
+                  {/* 启动服务按钮：已构建且服务未运行时显示 */}
+                  {canStartDev && (
+                    <button
+                      onClick={() => startQuarkusDevServer(messageId!)}
+                      disabled={isStartingDev}
+                      className={styles.buildButton}
+                    >
+                      {isStartingDev ? (
+                        <>
+                          <Loader2 size={14} className={styles.spin} />
+                          <span>启动中...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Cpu size={14} />
+                          <span>启动服务</span>
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {/* 服务运行中状态 - 显示停止按钮 */}
+                  {devServerRunning.has(messageId!) && (
+                    <button
+                      onClick={() => stopQuarkusDevServer(messageId!)}
+                      className={styles.stopButton}
+                    >
+                      <Square size={14} fill="currentColor" />
+                      <span>停止服务</span>
+                    </button>
+                  )}
+
+                  {/* 服务启动中状态 */}
+                  {isStartingDev && !devServerRunning.has(messageId!) && buildResult?.phase === 'dev' && (
+                    <button
+                      disabled
+                      className={clsx(styles.buildButton, styles.builtButton)}
+                    >
+                      <Loader2 size={14} className={styles.spin} />
+                      <span>启动中...</span>
+                    </button>
+                  )}
+
+                  {/* 已构建但无法启动服务的状态（可选） */}
+                  {isBuilt && !canStartDev && !isStartingDev && !devServerRunning.has(messageId!) && (
                     <button
                       disabled
                       className={clsx(styles.buildButton, styles.builtButton)}
@@ -334,12 +385,12 @@ export function ChatInterface({
     const logs: string[] = []
 
     try {
-      // 调用流式构建 API
+      // 第一步：执行 Maven 构建
       await chatApi.executeBuildCommandStream(
         {
           command: 'mvn clean install -DskipTests',
           command_type: 'maven',
-          timeout: 300
+          timeout: 600  // 增加到 10 分钟，首次构建可能需要下载依赖
         },
         {
           onLog: (line: string) => {
@@ -354,11 +405,13 @@ export function ChatInterface({
                 stdout: logs.join('\n'),
                 stderr: '',
                 execution_time: (Date.now() - startTime) / 1000,
-                message: '构建中...'
+                message: 'Maven 构建中...',
+                phase: 'build'
               }
             }))
           },
           onComplete: (success: boolean, message: string) => {
+            console.log(`构建 onComplete 触发: success=${success}, message=${message}`)
             const executionTime = (Date.now() - startTime) / 1000
             setBuildResults(prev => ({
               ...prev,
@@ -369,11 +422,16 @@ export function ChatInterface({
                 stdout: logs.join('\n'),
                 stderr: '',
                 execution_time: executionTime,
-                message
+                message,
+                phase: 'build'
               }
             }))
+
             if (success) {
+              console.log('构建成功，用户可以点击"启动服务"按钮')
               setBuiltMessageIds(prev => new Set(prev).add(messageId))
+            } else {
+              console.error('构建失败')
             }
           },
           onError: (error: string) => {
@@ -387,7 +445,8 @@ export function ChatInterface({
                 stdout: logs.join('\n'),
                 stderr: error,
                 execution_time: (Date.now() - startTime) / 1000,
-                message: `构建错误: ${error}`
+                message: `构建错误: ${error}`,
+                phase: 'build'
               }
             }))
           }
@@ -405,12 +464,194 @@ export function ChatInterface({
           stdout: logs.join('\n'),
           stderr: error instanceof Error ? error.message : String(error),
           execution_time: executionTime,
-          message: `构建失败: ${error instanceof Error ? error.message : String(error)}`
+          message: `构建失败: ${error instanceof Error ? error.message : String(error)}`,
+          phase: 'build'
         }
       }))
       throw error
     } finally {
       setBuildingMessageId(null)
+    }
+  }
+
+  // 停止 Quarkus 开发服务器
+  const stopQuarkusDevServer = async (messageId: string) => {
+    console.log('[stopQuarkusDevServer] 停止开发服务器, messageId:', messageId)
+
+    try {
+      // 1. 先取消正在运行的流式请求
+      const controller = devServerAbortControllersRef.current[messageId]
+      if (controller) {
+        console.log('[stopQuarkusDevServer] 取消流式请求')
+        controller.abort()
+        delete devServerAbortControllersRef.current[messageId]
+      }
+
+      // 2. 调用停止服务 API（不等待流式请求结束）
+      console.log('[stopQuarkusDevServer] 调用停止服务 API')
+      const stopResult = await chatApi.stopService(8080)
+      console.log('停止服务结果:', stopResult)
+
+      // 3. 从运行中移除
+      setDevServerRunning(prev => {
+        const next = new Set(prev)
+        next.delete(messageId)
+        return next
+      })
+
+      // 4. 更新构建结果
+      setBuildResults(prev => {
+        const current = prev[messageId]
+        if (!current) return prev
+
+        return {
+          ...prev,
+          [messageId]: {
+            ...current,
+            success: true,
+            message: stopResult.message || '服务已停止',
+            phase: 'build'
+          }
+        }
+      })
+    } catch (error) {
+      console.error('停止开发服务器失败:', error)
+      // 即使失败也要从运行状态移除
+      setDevServerRunning(prev => {
+        const next = new Set(prev)
+        next.delete(messageId)
+        return next
+      })
+    }
+  }
+
+  // 启动 Quarkus 开发服务器
+  const startQuarkusDevServer = async (messageId: string) => {
+    console.log('[startQuarkusDevServer] 启动开发服务器, messageId:', messageId)
+    setDevServerRunning(prev => new Set(prev).add(messageId))
+    const devStartTime = Date.now()
+    const devLogs: string[] = []
+
+    // 创建 AbortController 用于取消流式请求
+    const controller = new AbortController()
+    devServerAbortControllersRef.current[messageId] = controller
+
+    // 更新状态为"准备启动"
+    setBuildResults(prev => {
+      const current = prev[messageId]
+      return {
+        ...prev,
+        [messageId]: {
+          ...current,
+          success: null,
+          message: '清理端口中...',
+          phase: 'dev'
+        }
+      }
+    })
+
+    try {
+      // 先清理 8080 端口
+      devLogs.push('--- 清理 8080 端口 ---')
+      console.log('开始清理 8080 端口...')
+
+      let portKillSuccess = true
+      try {
+        const portKillResult = await chatApi.executeBuildCommand({
+          command: 'ziro kill -f 8080',
+          command_type: 'custom',
+          timeout: 10
+        })
+        console.log('端口清理结果:', portKillResult)
+        if (portKillResult.stdout) {
+          devLogs.push(portKillResult.stdout)
+        }
+        if (!portKillResult.success) {
+          portKillSuccess = false
+          devLogs.push(`端口清理命令返回失败: ${portKillResult.message}`)
+        }
+      } catch (portError) {
+        console.error('端口清理错误:', portError)
+        portKillSuccess = false
+        devLogs.push(`端口清理异常: ${portError instanceof Error ? portError.message : String(portError)}`)
+      }
+
+      devLogs.push('端口清理完成，准备启动 Quarkus...')
+
+      // 更新状态并显示端口清理日志
+      setBuildResults(prev => {
+        const current = prev[messageId]
+        return {
+          ...prev,
+          [messageId]: {
+            ...current,
+            success: null,
+            message: 'Quarkus 项目启动中...',
+            phase: 'dev',
+            stdout: devLogs.join('\n')
+          }
+        }
+      })
+
+      console.log('开始启动 Quarkus 开发服务器...')
+      devLogs.push('--- Quarkus 开发服务器 ---')
+
+      // 启动流式执行 Quarkus 开发服务器（多模块项目）
+      await chatApi.executeBuildCommandStream(
+        {
+          command: 'mvn -pl labor-tracking-app -am io.quarkus:quarkus-maven-plugin:dev',
+          command_type: 'maven',
+          timeout: 3600  // 1小时超时
+        },
+        {
+          onLog: (line: string) => {
+            devLogs.push(line)
+            // 更新开发服务器日志
+            setBuildResults(prev => {
+              const current = prev[messageId]
+              return {
+                ...prev,
+                [messageId]: {
+                  ...current,
+                  stdout: devLogs.join('\n')
+                }
+              }
+            })
+          },
+          onComplete: (success: boolean, message: string) => {
+            // 清理 AbortController
+            delete devServerAbortControllersRef.current[messageId]
+
+            setDevServerRunning(prev => {
+              const next = new Set(prev)
+              next.delete(messageId)
+              return next
+            })
+          },
+          onError: (error: string) => {
+            console.error('Quarkus 开发服务器错误:', error)
+            // 清理 AbortController
+            delete devServerAbortControllersRef.current[messageId]
+
+            setDevServerRunning(prev => {
+              const next = new Set(prev)
+              next.delete(messageId)
+              return next
+            })
+          }
+        },
+        controller.signal
+      )
+    } catch (error) {
+      console.error('启动开发服务器失败:', error)
+      // 清理 AbortController
+      delete devServerAbortControllersRef.current[messageId]
+
+      setDevServerRunning(prev => {
+        const next = new Set(prev)
+        next.delete(messageId)
+        return next
+      })
     }
   }
 
@@ -496,16 +737,34 @@ export function ChatInterface({
                             buildResults[message.id].success === false ? styles.error :
                             styles.building
                           )}>
-                            {buildResults[message.id].success === true ? '✓ 构建成功' :
-                             buildResults[message.id].success === false ? '✗ 构建失败' :
-                             '⟳ 构建中...'}
+                            {/* 智能状态显示 */}
+                            {(() => {
+                              const result = buildResults[message.id]
+                              const wasRunning = writtenMessageIds.has(message.id) && builtMessageIds.has(message.id)
+
+                              // 服务已停止（之前构建过，但现在没有运行）
+                              if (result.success === true && result.phase === 'build' && wasRunning && !devServerRunning.has(message.id)) {
+                                return '✓ 服务已停止'
+                              }
+
+                              // 开发服务器运行中
+                              if (devServerRunning.has(message.id) && result.phase === 'dev') {
+                                return '🔥 开发服务器运行中'
+                              }
+
+                              // 标准状态
+                              if (result.success === true) return '✓ 构建成功'
+                              if (result.success === false) return '✗ 构建失败'
+                              if (result.phase === 'dev') return '⟳ 项目启动中...'
+                              return '⟳ 构建中...'
+                            })()}
                             <span className={styles.executionTime}>
                               ({buildResults[message.id].execution_time.toFixed(2)}s)
                             </span>
                           </div>
                           <details
                             className={styles.buildDetails}
-                            open={expandedBuildLogs.has(message.id)}
+                            open={expandedBuildLogs.has(message.id) || devServerRunning.has(message.id)}
                             onToggle={(e) => {
                               const isOpen = (e.target as HTMLDetailsElement).open
                               setExpandedBuildLogs(prev => {
@@ -519,12 +778,16 @@ export function ChatInterface({
                               })
                             }}
                           >
-                            <summary>构建日志</summary>
+                            <summary>{buildResults[message.id].phase === 'dev' ? '开发服务器日志' : '构建日志'}</summary>
                             <pre
                               ref={(el) => {
-                                // 自动滚动到底部（仅在构建中或刚展开时）
-                                if (el && buildingMessageId === message.id) {
-                                  el.scrollTop = el.scrollHeight
+                                // 自动滚动到底部（构建中或开发服务器运行中）
+                                if (el && (buildingMessageId === message.id || devServerRunning.has(message.id))) {
+                                  requestAnimationFrame(() => {
+                                    if (el) {
+                                      el.scrollTop = el.scrollHeight
+                                    }
+                                  })
                                 }
                               }}
                               className={styles.buildLog}

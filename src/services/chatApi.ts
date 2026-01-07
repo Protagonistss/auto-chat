@@ -78,6 +78,7 @@ export interface BuildCommandResponse {
   stderr: string
   execution_time: number
   message: string
+  phase?: 'build' | 'dev'  // build = 构建阶段, dev = 开发服务器启动阶段
 }
 
 /**
@@ -539,23 +540,68 @@ class ChatApiClient {
   }
 
   /**
-   * 执行构建命令
+   * 停止运行中的服务
    */
-  async executeBuildCommand(request: BuildCommandRequest): Promise<BuildCommandResponse> {
-    const response = await fetch(`${this.baseUrl}/build/execute`, {
+  async stopService(port: number = 8080): Promise<{
+    success: boolean
+    message: string
+  }> {
+    const response = await fetch(`${this.baseUrl}/build/stop`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify({ port }),
     })
 
     if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: '执行构建命令失败' }))
-      throw new Error(error.detail || `执行构建命令失败: ${response.statusText}`)
+      throw new Error(`停止服务失败: ${response.statusText}`)
     }
 
     return response.json()
+  }
+
+  /**
+   * 执行构建命令
+   */
+  async executeBuildCommand(request: BuildCommandRequest): Promise<BuildCommandResponse> {
+    console.log('发送构建请求:', request)
+
+    // 创建 AbortController 用于超时控制
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), (request.timeout || 300) * 1000 + 5000)
+
+    try {
+      const response = await fetch(`${this.baseUrl}/build/execute`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request),
+        signal: controller.signal
+      })
+
+      clearTimeout(timeoutId)
+
+      console.log('构建响应状态:', response.status)
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: '执行构建命令失败' }))
+        console.error('构建请求失败:', error)
+        throw new Error(error.detail || `执行构建命令失败: ${response.statusText}`)
+      }
+
+      const result = await response.json()
+      console.log('构建响应结果:', result)
+      return result
+    } catch (error) {
+      clearTimeout(timeoutId)
+      console.error('构建请求异常:', error)
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error('请求超时')
+      }
+      throw error
+    }
   }
 
   /**
@@ -570,6 +616,8 @@ class ChatApiClient {
     },
     signal?: AbortSignal
   ): Promise<void> {
+    console.log('开始流式构建请求:', request)
+
     const response = await fetch(`${this.baseUrl}/build/execute/stream`, {
       method: 'POST',
       headers: {
@@ -584,6 +632,8 @@ class ChatApiClient {
       throw new Error(error.detail || `执行构建命令失败: ${response.statusText}`)
     }
 
+    console.log('流式响应已建立，开始读取...')
+
     const reader = response.body?.getReader()
     if (!reader) {
       throw new Error('无法读取响应流')
@@ -591,12 +641,16 @@ class ChatApiClient {
 
     const decoder = new TextDecoder()
     let buffer = ''
+    let logCount = 0
 
     try {
       while (true) {
         const { done, value } = await reader.read()
 
-        if (done) break
+        if (done) {
+          console.log(`流式响应结束，共接收 ${logCount} 条日志`)
+          break
+        }
 
         buffer += decoder.decode(value, { stream: true })
 
@@ -612,18 +666,21 @@ class ChatApiClient {
               const event = JSON.parse(data)
 
               if (event.type === 'log') {
+                logCount++
                 callbacks.onLog(event.line)
               } else if (event.type === 'complete') {
+                console.log(`收到 complete 事件: success=${event.success}, message=${event.message}`)
                 callbacks.onComplete(event.success, event.message)
                 return
               }
             } catch (e) {
-              console.error('解析 SSE 事件失败:', e)
+              console.error('解析 SSE 事件失败:', e, 'data:', data)
             }
           }
         }
       }
     } catch (error) {
+      console.error('流式请求异常:', error)
       if (error instanceof Error && error.name === 'AbortError') {
         callbacks.onError('请求已取消')
         throw error
